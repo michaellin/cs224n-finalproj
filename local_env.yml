@@ -1,0 +1,14 @@
+name: local_env
+channels:
+  - pytorch
+  - defaults
+  - auto
+dependencies:
+  - pytorch=0.4
+  - python=2.7
+  - numpy
+  - scipy
+  - nltk
+  - torchvision
+  - tensorflow=1.15
+  - pyrouge

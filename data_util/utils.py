@@ -3,6 +3,7 @@ import os
 import pyrouge
 import logging
 import tensorflow as tf
+import torch
 
 def print_results(article, abstract, decoded_output):
   print ("")
@@ -88,4 +89,52 @@ def write_for_rouge(reference_sents, decoded_words, ex_index,
     for idx, sent in enumerate(decoded_sents):
       f.write(sent) if idx == len(decoded_sents) - 1 else f.write(sent + "\n")
 
-  #print("Wrote example %i to file" % ex_index)
+
+def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
+                final_dist, vocab_dist, p_gens):
+    """ Compare number of novel n-grams to the values of p-gen.
+      Is there a correlation between p-gen values and n-gram
+      novelty?
+        @param vocab
+        @param reference_sents (str)
+        @param input_text (str)
+        @param decoded_words (List[str])
+        @param final_dist
+        @param vocab_dist
+        @param p_gens (List[float])
+
+        Notes:
+
+        Ideas
+        1. gather top p_gen values and their associated words
+        2. is attn_dist overtaking vocab_dist because one dist
+        is more spread than the other? compare their max values
+    """
+    # check that the number of decoded words is same as len of p_gens
+    # note batcher has self.article_oovs
+    #term1_list = []
+    #term2_list = []
+    #for wi,word in enumerate(decoded_words):
+    #    wordidx= vocab.word2id(word)
+    #    term1 = vocab_dist[wi][wordidx]*p_gens[wi]
+    #    term1_list += [term1.item()]
+    #    term2_list += [(final_dist[wi][wordidx]-term1).item()]
+
+    #print(term1_list)
+    #print(term2_list)
+    #art_one_gram = input_art.split()
+    #art_two_gram = [(art_one_gram[i], art_one_gram[i+1]) for i in range(len(art_one_gram)-1)]
+    #art_three_gram = [(art_one_gram[i], art_one_gram[i+1], art_one_gram[i+2]) for i in range(len(art_one_gram)-2)]
+
+    #dec_one_gram = decoded_words[:]
+    #dec_two_gram = [(dec_one_gram[i], dec_one_gram[i+1]) for i in range(len(dec_one_gram)-1)]
+    #dec_three_gram = [(dec_one_gram[i], dec_one_gram[i+1], dec_one_gram[i+2]) for i in range(len(dec_one_gram)-2)]
+
+    #print("===========================decoded_words===========================")
+    #print(decoded_words)
+    #print("===========================p_gens===========================")
+    #print(p_gens)
+    #print("===========================attn_dist===========================")
+    #print([torch.max(a).item() for a in attn_dist])
+    #print("===========================vocab_dist===========================")
+    #print([torch.max(v).item() for v in vocab_dist])

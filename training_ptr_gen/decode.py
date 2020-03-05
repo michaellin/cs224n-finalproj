@@ -18,25 +18,37 @@ from data_util.data import Vocab
 from data_util import data, config
 from model import Model
 from data_util.utils import write_for_rouge, rouge_eval, rouge_log
+from data_util.utils import analyze_pgen
 from train_util import get_input_from_batch
 
 
 use_cuda = config.use_gpu and torch.cuda.is_available()
 
 class Beam(object):
-  def __init__(self, tokens, log_probs, state, context, coverage):
+  # Michael added arg p_gen
+  def __init__(self, tokens, log_probs, state, context, coverage, 
+              p_gen, vocab_dist, final_dist):
     self.tokens = tokens
     self.log_probs = log_probs
     self.state = state
     self.context = context
     self.coverage = coverage
+    # Michael added to track all p_gen of this beam
+    self.p_gens = p_gen
+    self.vocab_list = vocab_dist
+    self.final_dist_list = final_dist
 
-  def extend(self, token, log_prob, state, context, coverage):
+  # Michael added arg p_gen
+  def extend(self, token, log_prob, state, context, coverage, 
+            p_gen, vocab_dist, final_dist):
     return Beam(tokens = self.tokens + [token],
                       log_probs = self.log_probs + [log_prob],
                       state = state,
                       context = context,
-                      coverage = coverage)
+                      coverage = coverage,
+                      p_gen = self.p_gens + [p_gen],
+                      vocab_dist = self.vocab_list + [vocab_dist],
+                      final_dist = self.final_dist_list + [final_dist])
 
   @property
   def latest_token(self):
@@ -74,17 +86,30 @@ class BeamSearch(object):
         batch = self.batcher.next_batch()
         while batch is not None:
             # Run beam search to get best Hypothesis
+            # Here try to return the p_gen values
             best_summary = self.beam_search(batch)
+
 
             # Extract the output ids from the hypothesis and convert back to words
             output_ids = [int(t) for t in best_summary.tokens[1:]]
             decoded_words = data.outputids2words(output_ids, self.vocab,
                                                  (batch.art_oovs[0] if config.pointer_gen else None))
 
+            # Extract list of p_gen values without first value
+            p_gens = best_summary.p_gens[1:]
+            # Extract list of contexts values without first value
+            #context_list = best_summary.context_list[1:]
+            final_dist_list = best_summary.final_dist_list[1:]
+            vocab_list = best_summary.vocab_list[1:]
+
             # Remove the [STOP] token from decoded_words, if necessary
             try:
                 fst_stop_idx = decoded_words.index(data.STOP_DECODING)
                 decoded_words = decoded_words[:fst_stop_idx]
+                p_gens = p_gens[:fst_stop_idx]
+                #context_list = context_list [:fst_stop_idx]
+                final_dist_list = final_dist_list [:fst_stop_idx]
+                vocab_list = vocab_list [:fst_stop_idx]
             except ValueError:
                 decoded_words = decoded_words
 
@@ -92,6 +117,16 @@ class BeamSearch(object):
 
             write_for_rouge(original_abstract_sents, decoded_words, counter,
                             self._rouge_ref_dir, self._rouge_dec_dir)
+
+            # analyze relation of pgen to the decoded words
+            analyze_pgen(vocab=self.vocab,
+                        reference_sents=original_abstract_sents, 
+                        input_art=batch.original_articles[0], 
+                        decoded_words=decoded_words, 
+                        final_dist=final_dist_list,
+                        vocab_dist=vocab_list,
+                        p_gens=p_gens)
+
             counter += 1
             if counter % 1000 == 0:
                 print('%d example in %d sec'%(counter, time.time() - start))
@@ -122,7 +157,10 @@ class BeamSearch(object):
                       log_probs=[0.0],
                       state=(dec_h[0], dec_c[0]),
                       context = c_t_0[0],
-                      coverage=(coverage_t_0[0] if config.is_coverage else None))
+                      coverage=(coverage_t_0[0] if config.is_coverage else None),
+                      p_gen = [0.0],
+                      vocab_dist=[],
+                      final_dist=[])
                  for _ in xrange(config.beam_size)]
         results = []
         steps = 0
@@ -172,13 +210,19 @@ class BeamSearch(object):
                 state_i = (dec_h[i], dec_c[i])
                 context_i = c_t[i]
                 coverage_i = (coverage_t[i] if config.is_coverage else None)
+                p_gen_i = p_gen[i].item()
+                vocab_dist_i = self.model.decoder.get_vocab_dist()[i]
+                final_dist_i = final_dist[i]
 
                 for j in xrange(config.beam_size * 2):  # for each of the top 2*beam_size hyps:
                     new_beam = h.extend(token=topk_ids[i, j].item(),
                                    log_prob=topk_log_probs[i, j].item(),
                                    state=state_i,
                                    context=context_i,
-                                   coverage=coverage_i)
+                                   coverage=coverage_i,
+                                   p_gen=p_gen_i,
+                                   vocab_dist=vocab_dist_i,
+                                   final_dist=final_dist_i)
                     all_beams.append(new_beam)
 
             beams = []

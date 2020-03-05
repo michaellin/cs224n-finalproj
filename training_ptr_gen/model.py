@@ -146,6 +146,9 @@ class Decoder(nn.Module):
         self.out2 = nn.Linear(config.hidden_dim, config.vocab_size)
         init_linear_wt(self.out2)
 
+        # store vocab_dist locally
+        self.vocab_dist_ = torch.tensor([])
+
     def forward(self, y_t_1, s_t_1, encoder_outputs, encoder_feature, enc_padding_mask,
                 c_t_1, extra_zeros, enc_batch_extend_vocab, coverage, step):
 
@@ -184,6 +187,8 @@ class Decoder(nn.Module):
         output = self.out2(output) # B x vocab_size
         vocab_dist = F.softmax(output, dim=1)
 
+        self.vocab_dist_ = vocab_dist
+
         if config.pointer_gen:
             vocab_dist_ = p_gen * vocab_dist
             attn_dist_ = (1 - p_gen) * attn_dist
@@ -196,6 +201,9 @@ class Decoder(nn.Module):
             final_dist = vocab_dist
 
         return final_dist, s_t, c_t, attn_dist, p_gen, coverage
+
+    def get_vocab_dist(self):
+        return self.vocab_dist_
 
 class Model(object):
     def __init__(self, model_file_path=None, is_eval=False):
