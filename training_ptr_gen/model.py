@@ -100,6 +100,7 @@ class Attention(nn.Module):
         dec_fea_expanded = dec_fea_expanded.view(-1, n)  # B * t_k x 2*hidden_dim
 
         att_features = encoder_feature + dec_fea_expanded # B * t_k x 2*hidden_dim
+        # TODO need to shorten att_features here to actual max length
         if config.is_coverage:
             coverage_input = coverage.view(-1, 1)  # B * t_k x 1
             coverage_feature = self.W_c(coverage_input)  # B * t_k x 2*hidden_dim
@@ -109,6 +110,7 @@ class Attention(nn.Module):
         scores = self.v(e)  # B * t_k x 1
         scores = scores.view(-1, t_k)  # B x t_k
 
+        # Michael: TODO may need to use padding mask in the new computation as well
         attn_dist_ = F.softmax(scores, dim=1)*enc_padding_mask # B x t_k
         normalization_factor = attn_dist_.sum(1, keepdim=True)
         attn_dist = attn_dist_ / normalization_factor
@@ -123,7 +125,8 @@ class Attention(nn.Module):
             coverage = coverage.view(-1, t_k)
             coverage = coverage + attn_dist
 
-        return c_t, attn_dist, coverage
+        # Note: Michael added return for e
+        return c_t, attn_dist, coverage, e.view(b, t_k, n)
 
 class Decoder(nn.Module):
     def __init__(self):
@@ -141,22 +144,31 @@ class Decoder(nn.Module):
         if config.pointer_gen:
             self.p_gen_linear = nn.Linear(config.hidden_dim * 4 + config.emb_dim, 1)
 
-        #p_vocab
+        #P_vocab
         self.out1 = nn.Linear(config.hidden_dim * 3, config.hidden_dim)
+        init_linear_wt(self.out1)
         self.out2 = nn.Linear(config.hidden_dim, config.vocab_size)
         init_linear_wt(self.out2)
+
+        #E_vocab
+        self.out_e1 = nn.Linear(config.max_enc_steps, 1, bias=False)
+        #self.v = nn.Linear(config.hidden_dim * 2, 1, bias=False)
+        init_linear_wt(self.out_e1)
+        self.out_e2 = nn.Linear(2*config.hidden_dim, config.hidden_dim)
+        init_linear_wt(self.out_e2)
+        self.out_e3 = nn.Linear(config.hidden_dim, config.vocab_size)
+        init_linear_wt(self.out_e3)
 
         # store vocab_dist locally
         self.vocab_dist_ = torch.tensor([])
 
     def forward(self, y_t_1, s_t_1, encoder_outputs, encoder_feature, enc_padding_mask,
                 c_t_1, extra_zeros, enc_batch_extend_vocab, coverage, step):
-
         if not self.training and step == 0:
             h_decoder, c_decoder = s_t_1
             s_t_hat = torch.cat((h_decoder.view(-1, config.hidden_dim),
                                  c_decoder.view(-1, config.hidden_dim)), 1)  # B x 2*hidden_dim
-            c_t, _, coverage_next = self.attention_network(s_t_hat, encoder_outputs, encoder_feature,
+            c_t, _, coverage_next, e_t = self.attention_network(s_t_hat, encoder_outputs, encoder_feature,
                                                               enc_padding_mask, coverage)
             coverage = coverage_next
 
@@ -167,7 +179,7 @@ class Decoder(nn.Module):
         h_decoder, c_decoder = s_t
         s_t_hat = torch.cat((h_decoder.view(-1, config.hidden_dim),
                              c_decoder.view(-1, config.hidden_dim)), 1)  # B x 2*hidden_dim
-        c_t, attn_dist, coverage_next = self.attention_network(s_t_hat, encoder_outputs, encoder_feature,
+        c_t, attn_dist, coverage_next, e_t = self.attention_network(s_t_hat, encoder_outputs, encoder_feature,
                                                           enc_padding_mask, coverage)
 
         if self.training or step > 0:
@@ -179,24 +191,35 @@ class Decoder(nn.Module):
             p_gen = self.p_gen_linear(p_gen_input)
             p_gen = F.sigmoid(p_gen)
 
+        # next calculate P_vocab (vocab probability distribution)
         output = torch.cat((lstm_out.view(-1, config.hidden_dim), c_t), 1) # B x hidden_dim * 3
         output = self.out1(output) # B x hidden_dim
-
-        #output = F.relu(output)
 
         output = self.out2(output) # B x vocab_size
         vocab_dist = F.softmax(output, dim=1)
 
         self.vocab_dist_ = vocab_dist
 
+
         if config.pointer_gen:
+            # map e to vocab dist
+            # e is of size B x t_k x 2*hidden_dim
+            # collapse t_k with max pool -> e_t_max
+            # linear map e_t_max to diluted attention d_t
+            e_out1 = self.out_e1(e_t.permute(0,2,1)).squeeze(2) # B x 2*hidden_dim
+            e_out2 = self.out_e2(e_out1)  # B x hidden_dim
+            d_t = self.out_e3(e_out2) # B x vocab_size
+            d_t_dist = F.softmax(d_t, dim=1)
+
             vocab_dist_ = p_gen * vocab_dist
-            attn_dist_ = (1 - p_gen) * attn_dist
+            diluted_attn_dist_ = (1 - p_gen) * d_t_dist
+            #attn_dist_ = (1 - p_gen) * attn_dist
 
             if extra_zeros is not None:
                 vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], 1)
+                diluted_attn_dist_ = torch.cat([diluted_attn_dist_, extra_zeros], 1)
 
-            final_dist = vocab_dist_.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
+            final_dist = vocab_dist_ + diluted_attn_dist_
         else:
             final_dist = vocab_dist
 
