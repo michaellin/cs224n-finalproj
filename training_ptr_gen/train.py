@@ -10,6 +10,7 @@ from model import Model
 from torch.nn.utils import clip_grad_norm_
 
 from torch.optim import Adagrad
+from torch.autograd import Variable
 
 from data_util import config
 from data_util.batcher import Batcher
@@ -91,6 +92,7 @@ class Train(object):
                                                         encoder_outputs, encoder_feature, enc_padding_mask, c_t_1,
                                                         extra_zeros, enc_batch_extend_vocab,
                                                                            coverage, di)
+
             target = target_batch[:, di]
             gold_probs = torch.gather(final_dist, 1, target.unsqueeze(1)).squeeze()
             step_loss = -torch.log(gold_probs + config.eps)
@@ -98,14 +100,31 @@ class Train(object):
                 step_coverage_loss = torch.sum(torch.min(attn_dist, coverage), 1)
                 step_loss = step_loss + config.cov_loss_wt * step_coverage_loss
                 coverage = next_coverage
+
+            # calculate copy loss
+            vocab_zero = Variable(torch.zeros(self.model.decoder.vocab_dist_.shape, dtype=torch.float))
+            if use_cuda:
+                vocab_zero = vocab_zero.cuda()
+            if extra_zeros is not None:
+                vocab_zero = torch.cat([vocab_zero, extra_zeros], 1)
+            attn_dist_ = (1 - p_gen) * attn_dist
+            attn_expanded = vocab_zero.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
+            vocab_zero[:, self.vocab.word2id('[UNK]')] = 1.0
+            y_unk_neg = 1.0 - vocab_zero
+            copyloss=torch.bmm(y_unk_neg.unsqueeze(1), attn_expanded.unsqueeze(2))
+            
+            # add copy loss with lambda 2 weight
+            step_loss = step_loss + config.copy_loss_wt * copyloss
                 
             step_mask = dec_padding_mask[:, di]
             step_loss = step_loss * step_mask
             step_losses.append(step_loss)
 
+
         sum_losses = torch.sum(torch.stack(step_losses, 1), 1)
         batch_avg_loss = sum_losses/dec_lens_var
         loss = torch.mean(batch_avg_loss)
+        print(loss)
 
         loss.backward()
 
