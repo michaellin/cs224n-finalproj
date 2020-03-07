@@ -90,7 +90,7 @@ def write_for_rouge(reference_sents, decoded_words, ex_index,
       f.write(sent) if idx == len(decoded_sents) - 1 else f.write(sent + "\n")
 
 
-def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
+def analyze_pgen(vocab, reference_sents, input_art, decoded_word_ids,
                 final_dist, vocab_dist, p_gens):
     """ Compare number of novel n-grams to the values of p-gen.
       Is there a correlation between p-gen values and n-gram
@@ -98,7 +98,7 @@ def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
         @param vocab
         @param reference_sents (str)
         @param input_text (str)
-        @param decoded_words (List[str])
+        @param decoded_word_ids (List[int]) range of vocab
         @param final_dist
         @param vocab_dist
         @param p_gens (List[float])
@@ -112,17 +112,17 @@ def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
     """
     # check that the number of decoded words is same as len of p_gens
     # note batcher has self.article_oovs
-    #term1_list = []
-    #term2_list = []
-    #for wi,word in enumerate(decoded_words):
-    #    wordidx= vocab.word2id(word)
-    #    term1 = vocab_dist[wi][wordidx]*p_gens[wi]
-    #    term1_list += [term1.item()]
-    #    term2_list += [(final_dist[wi][wordidx]-term1).item()]
+    term1_list = []
+    term2_list = []
+    for wi,word in enumerate(decoded_words):
+        wordidx= vocab.word2id(word)
+        term1 = vocab_dist[wi][wordidx]*p_gens[wi]
+        term1_list += [term1.item()]
+        term2_list += [(final_dist[wi][wordidx]-term1).item()]
 
     #print(term1_list)
     #print(term2_list)
-    #art_one_gram = input_art.split()
+    art_one_gram = input_art.split()
     #art_two_gram = [(art_one_gram[i], art_one_gram[i+1]) for i in range(len(art_one_gram)-1)]
     #art_three_gram = [(art_one_gram[i], art_one_gram[i+1], art_one_gram[i+2]) for i in range(len(art_one_gram)-2)]
 

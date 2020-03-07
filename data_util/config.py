@@ -1,6 +1,6 @@
 import os
 
-root_dir = os.path.expanduser("~/workspace/final_proj/pointer_summarizer")
+root_dir = os.path.expanduser("~/ml_ws/cs224n/cs224n-finalproj")
 
 #train_data_path = os.path.join(root_dir, "ptr_nw/cnn-dailymail-master/finished_files/train.bin")
 train_data_path = os.path.join(root_dir, "../cnn-dailymail/finished_files/chunked/train_*")
@@ -28,6 +28,7 @@ max_grad_norm=2.0
 pointer_gen = True
 is_coverage = True
 cov_loss_wt = 1.0
+copy_loss_wt = 1.0
 
 eps = 1e-12
 max_iterations = 500000

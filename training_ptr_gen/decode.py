@@ -122,7 +122,7 @@ class BeamSearch(object):
             analyze_pgen(vocab=self.vocab,
                         reference_sents=original_abstract_sents, 
                         input_art=batch.original_articles[0], 
-                        decoded_words=decoded_words, 
+                        decoded_word_ids=output_ids, 
                         final_dist=final_dist_list,
                         vocab_dist=vocab_list,
                         p_gens=p_gens)
