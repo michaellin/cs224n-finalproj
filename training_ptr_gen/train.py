@@ -1,4 +1,5 @@
 from __future__ import unicode_literals, print_function, division
+import math
 
 import os
 import time
@@ -36,6 +37,7 @@ class Train(object):
             os.mkdir(self.model_dir)
 
         self.summary_writer = tf.summary.FileWriter(train_dir)
+        self.last_good_model_save_path = None 
 
     def save_model(self, running_avg_loss, iter):
         state = {
@@ -47,6 +49,9 @@ class Train(object):
             'current_loss': running_avg_loss
         }
         model_save_path = os.path.join(self.model_dir, 'model_%d_%d' % (iter, int(time.time())))
+        # save the path to the last model that was not nan
+        if (not math.isnan(running_avg_loss)):
+            self.last_good_model_save_path = model_save_path 
         torch.save(state, model_save_path)
 
     def setup_train(self, model_file_path=None):
@@ -110,6 +115,8 @@ class Train(object):
             attn_dist_ = (1 - p_gen) * attn_dist
             attn_expanded = vocab_zero.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
             vocab_zero[:, self.vocab.word2id('[UNK]')] = 1.0
+            # remember to not make loss on the OOV
+            vocab_zero[:, config.vocab_size:] = 1.0
             y_unk_neg = 1.0 - vocab_zero
             copyloss=torch.bmm(y_unk_neg.unsqueeze(1), attn_expanded.unsqueeze(2))
             
@@ -124,7 +131,6 @@ class Train(object):
         sum_losses = torch.sum(torch.stack(step_losses, 1), 1)
         batch_avg_loss = sum_losses/dec_lens_var
         loss = torch.mean(batch_avg_loss)
-        print(loss)
 
         loss.backward()
 
@@ -146,6 +152,12 @@ class Train(object):
             running_avg_loss = calc_running_avg_loss(loss, running_avg_loss, self.summary_writer, iter)
             iter += 1
 
+            if (math.isnan(running_avg_loss)):
+                print('Found a nan loss return. Restarting the training at {}' \
+                        .format(self.last_good_model_save_path))
+                iter, running_avg_loss = self.setup_train(self.last_good_model_save_path)
+                start = time.time()
+
             if iter % 100 == 0:
                 self.summary_writer.flush()
             print_interval = 1000
@@ -153,7 +165,7 @@ class Train(object):
                 print('steps %d, seconds for %d batch: %.2f , loss: %f' % (iter, print_interval,
                                                                            time.time() - start, loss))
                 start = time.time()
-            if iter % 5000 == 0:
+            if iter % 1000 == 0:
                 self.save_model(running_avg_loss, iter)
 
 if __name__ == '__main__':
