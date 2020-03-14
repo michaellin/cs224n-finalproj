@@ -56,6 +56,7 @@ class Train(object):
 
     def setup_train(self, model_file_path=None):
         self.model = Model(model_file_path)
+        self.last_good_model_save_path = model_file_path
 
         params = list(self.model.encoder.parameters()) + list(self.model.decoder.parameters()) + \
                  list(self.model.reduce_state.parameters())
@@ -116,7 +117,7 @@ class Train(object):
             attn_expanded = vocab_zero.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
             vocab_zero[:, self.vocab.word2id('[UNK]')] = 1.0
             # remember to not make loss on the OOV
-            vocab_zero[:, config.vocab_size:] = 1.0
+            #vocab_zero[:, config.vocab_size:] = 1.0
             y_unk_neg = 1.0 - vocab_zero
             copyloss=torch.bmm(y_unk_neg.unsqueeze(1), attn_expanded.unsqueeze(2))
             
