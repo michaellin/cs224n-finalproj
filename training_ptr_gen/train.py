@@ -1,4 +1,5 @@
 from __future__ import unicode_literals, print_function, division
+import math
 
 import os
 import time
@@ -10,6 +11,7 @@ from model import Model
 from torch.nn.utils import clip_grad_norm_
 
 from torch.optim import Adagrad
+from torch.autograd import Variable
 
 from data_util import config
 from data_util.batcher import Batcher
@@ -35,6 +37,7 @@ class Train(object):
             os.mkdir(self.model_dir)
 
         self.summary_writer = tf.summary.FileWriter(train_dir)
+        self.last_good_model_save_path = None 
 
     def save_model(self, running_avg_loss, iter):
         state = {
@@ -46,10 +49,14 @@ class Train(object):
             'current_loss': running_avg_loss
         }
         model_save_path = os.path.join(self.model_dir, 'model_%d_%d' % (iter, int(time.time())))
+        # save the path to the last model that was not nan
+        if (not math.isnan(running_avg_loss)):
+            self.last_good_model_save_path = model_save_path 
         torch.save(state, model_save_path)
 
     def setup_train(self, model_file_path=None):
         self.model = Model(model_file_path)
+        self.last_good_model_save_path = model_file_path
 
         params = list(self.model.encoder.parameters()) + list(self.model.decoder.parameters()) + \
                  list(self.model.reduce_state.parameters())
@@ -91,6 +98,7 @@ class Train(object):
                                                         encoder_outputs, encoder_feature, enc_padding_mask, c_t_1,
                                                         extra_zeros, enc_batch_extend_vocab,
                                                                            coverage, di)
+
             target = target_batch[:, di]
             gold_probs = torch.gather(final_dist, 1, target.unsqueeze(1)).squeeze()
             step_loss = -torch.log(gold_probs + config.eps)
@@ -98,10 +106,28 @@ class Train(object):
                 step_coverage_loss = torch.sum(torch.min(attn_dist, coverage), 1)
                 step_loss = step_loss + config.cov_loss_wt * step_coverage_loss
                 coverage = next_coverage
+
+            # calculate copy loss
+            vocab_zero = Variable(torch.zeros(self.model.decoder.vocab_dist_.shape, dtype=torch.float))
+            if use_cuda:
+                vocab_zero = vocab_zero.cuda()
+            if extra_zeros is not None:
+                vocab_zero = torch.cat([vocab_zero, extra_zeros], 1)
+            attn_dist_ = (1 - p_gen) * attn_dist
+            attn_expanded = vocab_zero.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
+            vocab_zero[:, self.vocab.word2id('[UNK]')] = 1.0
+            # Not sure whether we want to add loss for the extra vocab indices
+            #vocab_zero[:, config.vocab_size:] = 1.0
+            y_unk_neg = 1.0 - vocab_zero
+            copyloss=torch.bmm(y_unk_neg.unsqueeze(1), attn_expanded.unsqueeze(2))
+            
+            # add copy loss with lambda 2 weight
+            step_loss = step_loss + config.copy_loss_wt * copyloss
                 
             step_mask = dec_padding_mask[:, di]
             step_loss = step_loss * step_mask
             step_losses.append(step_loss)
+
 
         sum_losses = torch.sum(torch.stack(step_losses, 1), 1)
         batch_avg_loss = sum_losses/dec_lens_var
@@ -127,6 +153,12 @@ class Train(object):
             running_avg_loss = calc_running_avg_loss(loss, running_avg_loss, self.summary_writer, iter)
             iter += 1
 
+            if (math.isnan(running_avg_loss)):
+                print('Found a nan loss return. Restarting the training at {}' \
+                        .format(self.last_good_model_save_path))
+                iter, running_avg_loss = self.setup_train(self.last_good_model_save_path)
+                start = time.time()
+
             if iter % 100 == 0:
                 self.summary_writer.flush()
             print_interval = 1000
@@ -134,7 +166,7 @@ class Train(object):
                 print('steps %d, seconds for %d batch: %.2f , loss: %f' % (iter, print_interval,
                                                                            time.time() - start, loss))
                 start = time.time()
-            if iter % 5000 == 0:
+            if iter % 1000 == 0:
                 self.save_model(running_avg_loss, iter)
 
 if __name__ == '__main__':
