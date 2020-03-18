@@ -115,7 +115,7 @@ class Train(object):
             attn_dist_ = (1 - p_gen) * attn_dist
             attn_expanded = vocab_zero.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
             vocab_zero[:, self.vocab.word2id('[UNK]')] = 1.0
-            # remember to not make loss on the OOV
+            # Not sure whether we want to add loss for the extra vocab indices
             vocab_zero[:, config.vocab_size:] = 1.0
             y_unk_neg = 1.0 - vocab_zero
             copyloss=torch.bmm(y_unk_neg.unsqueeze(1), attn_expanded.unsqueeze(2))
