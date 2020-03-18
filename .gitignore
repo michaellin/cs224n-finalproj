@@ -2,3 +2,4 @@
 *.bin
 model_*
 log/
+*.h5

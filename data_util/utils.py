@@ -4,6 +4,9 @@ import pyrouge
 import logging
 import tensorflow as tf
 import torch
+from data_util import config
+import numpy as np
+import tables
 
 def print_results(article, abstract, decoded_output):
   print ("")
@@ -90,14 +93,18 @@ def write_for_rouge(reference_sents, decoded_words, ex_index,
       f.write(sent) if idx == len(decoded_sents) - 1 else f.write(sent + "\n")
 
 
-def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
-                final_dist, vocab_dist, p_gens):
+
+example_num = 0
+def analyze_pgen(data_fn, vocab, reference_sents, input_art_ids, oov_ids,
+          decoded_word_ids, decoded_words, final_dist, vocab_dist, p_gens):
     """ Compare number of novel n-grams to the values of p-gen.
       Is there a correlation between p-gen values and n-gram
       novelty?
         @param vocab
         @param reference_sents (str)
-        @param input_text (str)
+        @param input_art_ids (List[int])
+        @param oov_ids (List[int])
+        @param decoded_word_ids (List[int])
         @param decoded_words (List[str])
         @param final_dist
         @param vocab_dist
@@ -110,31 +117,61 @@ def analyze_pgen(vocab, reference_sents, input_art, decoded_words,
         2. is attn_dist overtaking vocab_dist because one dist
         is more spread than the other? compare their max values
     """
-    # check that the number of decoded words is same as len of p_gens
-    # note batcher has self.article_oovs
-    #term1_list = []
-    #term2_list = []
-    #for wi,word in enumerate(decoded_words):
-    #    wordidx= vocab.word2id(word)
-    #    term1 = vocab_dist[wi][wordidx]*p_gens[wi]
-    #    term1_list += [term1.item()]
-    #    term2_list += [(final_dist[wi][wordidx]-term1).item()]
+    global example_num
 
-    #print(term1_list)
-    #print(term2_list)
-    #art_one_gram = input_art.split()
-    #art_two_gram = [(art_one_gram[i], art_one_gram[i+1]) for i in range(len(art_one_gram)-1)]
-    #art_three_gram = [(art_one_gram[i], art_one_gram[i+1], art_one_gram[i+2]) for i in range(len(art_one_gram)-2)]
+    pad_size = config.max_enc_steps - input_art_ids.shape[1]
+    if (pad_size != 0):
+        input_art_ids_padded = np.pad(input_art_ids[0,:], (0,pad_size),'constant')
+    else:
+        input_art_ids_padded = input_art_ids[0,:]
+    # definition of pytable to store processed data
+    if (os.path.exists(data_fn)):
+        f = tables.open_file(data_fn, mode="a", title="Processed data from model {}".format(data_fn))
+        dec_arr = f.root.dec
+        point_arr = f.root.point
+        pgen_arr = f.root.pgen
+        copy_arr = f.root.copy
+        dec_word_arr = f.root.dec_word
+        dec_ids_arr = f.root.dec_ids 
+        ex_num_arr = f.root.ex_num
+        in_ids_arr = f.root.in_ids
+    else:
+        f = tables.open_file(data_fn, mode="w", title="Processed data from model {}".format(data_fn))
+        dec_out  = tables.Float32Col()     # float  (single-precision)
+        point_out  = tables.Float32Col()   # float  (single-precision)
+        pgen_out  = tables.Float32Col()    # float  (single-precision)
+        inart_id = tables.UInt32Col()      # int  (unsigned 32-bit)
+        ex_num = tables.UInt32Col()        # int  (unsigned 32-bit)
+        dec_id = tables.UInt32Col()        # int  (unsigned 32-bit)
+        copy = tables.UInt8Col()           # int  (unsigned 8-bit)
+        dec_word = tables.StringCol(100)
+        dec_arr = f.create_earray(f.root,'dec',dec_out,(1,0))
+        point_arr = f.create_earray(f.root,'point',point_out,(1,0))
+        pgen_arr = f.create_earray(f.root,'pgen',pgen_out,(1,0))
+        copy_arr = f.create_earray(f.root,'copy',copy,(1,0))
+        dec_word_arr = f.create_earray(f.root,'dec_word',dec_word,(1,0))
+        dec_ids_arr = f.create_earray(f.root,'dec_ids',dec_id,(1,0))
+        ex_num_arr = f.create_earray(f.root,'ex_num',ex_num,(1,0))
+        in_ids_arr = f.create_earray(f.root,'in_ids',inart_id,(config.max_enc_steps,0))
 
-    #dec_one_gram = decoded_words[:]
-    #dec_two_gram = [(dec_one_gram[i], dec_one_gram[i+1]) for i in range(len(dec_one_gram)-1)]
-    #dec_three_gram = [(dec_one_gram[i], dec_one_gram[i+1], dec_one_gram[i+2]) for i in range(len(dec_one_gram)-2)]
+    # add the input article ids to the table
+    in_ids_arr.append(input_art_ids_padded.reshape((config.max_enc_steps,1)))
 
-    #print("===========================decoded_words===========================")
-    #print(decoded_words)
-    #print("===========================p_gens===========================")
-    #print(p_gens)
-    #print("===========================attn_dist===========================")
-    #print([torch.max(a).item() for a in attn_dist])
-    #print("===========================vocab_dist===========================")
-    #print([torch.max(v).item() for v in vocab_dist])
+    for wi, word_id in enumerate(decoded_word_ids):
+        if word_id < vocab.size():
+            word_from_input = word_id in input_art_ids
+        else:
+            # if it is an oov then we know it was copied
+            word_from_input = True
+        
+        #word_in_source_temp += [word_from_input]
+        copy_arr.append(np.array([[int(word_from_input)]]))
+        decode_out = vocab_dist[wi][word_id]*p_gens[wi]
+        dec_arr.append(np.array([[decode_out.item()]]))
+        point_arr.append(np.array([[(final_dist[wi][word_id]-decode_out).item()]]))
+        pgen_arr.append(np.array([[p_gens[wi]]]))
+        dec_word_arr.append(np.array([[decoded_words[wi]]]))
+        dec_ids_arr.append(np.array([[word_id]]))
+        ex_num_arr.append(np.array([[example_num]]))
+    example_num += 1
+    f.close()
