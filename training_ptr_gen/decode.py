@@ -80,7 +80,7 @@ class BeamSearch(object):
         return sorted(beams, key=lambda h: h.avg_log_prob, reverse=True)
 
 
-    def decode(self):
+    def decode(self,data_fn):
         start = time.time()
         counter = 0
         batch = self.batcher.next_batch()
@@ -88,7 +88,6 @@ class BeamSearch(object):
             # Run beam search to get best Hypothesis
             # Here try to return the p_gen values
             best_summary = self.beam_search(batch)
-
 
             # Extract the output ids from the hypothesis and convert back to words
             output_ids = [int(t) for t in best_summary.tokens[1:]]
@@ -99,8 +98,9 @@ class BeamSearch(object):
             p_gens = best_summary.p_gens[1:]
             # Extract list of contexts values without first value
             #context_list = best_summary.context_list[1:]
-            final_dist_list = best_summary.final_dist_list[1:]
-            vocab_list = best_summary.vocab_list[1:]
+            #there is no start for these ones
+            final_dist_list = best_summary.final_dist_list[:]
+            vocab_list = best_summary.vocab_list[:]
 
             # Remove the [STOP] token from decoded_words, if necessary
             try:
@@ -108,6 +108,7 @@ class BeamSearch(object):
                 decoded_words = decoded_words[:fst_stop_idx]
                 p_gens = p_gens[:fst_stop_idx]
                 #context_list = context_list [:fst_stop_idx]
+                output_ids_nostop = output_ids[:fst_stop_idx]
                 final_dist_list = final_dist_list [:fst_stop_idx]
                 vocab_list = vocab_list [:fst_stop_idx]
             except ValueError:
@@ -119,9 +120,12 @@ class BeamSearch(object):
                             self._rouge_ref_dir, self._rouge_dec_dir)
 
             # analyze relation of pgen to the decoded words
-            analyze_pgen(vocab=self.vocab,
+            analyze_pgen(data_fn=data_fn,
+                        vocab=self.vocab,
                         reference_sents=original_abstract_sents, 
-                        input_art=batch.original_articles[0], 
+                        input_art_ids=batch.enc_batch, 
+                        oov_ids=batch.art_oovs[0],
+                        decoded_word_ids=output_ids_nostop, 
                         decoded_words=decoded_words, 
                         final_dist=final_dist_list,
                         vocab_dist=vocab_list,
@@ -225,6 +229,7 @@ class BeamSearch(object):
                                    final_dist=final_dist_i)
                     all_beams.append(new_beam)
 
+            # filter top k best beams
             beams = []
             for h in self.sort_beams(all_beams):
                 if h.latest_token == self.vocab.word2id(data.STOP_DECODING):
@@ -247,6 +252,6 @@ class BeamSearch(object):
 if __name__ == '__main__':
     model_filename = sys.argv[1]
     beam_Search_processor = BeamSearch(model_filename)
-    beam_Search_processor.decode()
+    beam_Search_processor.decode(sys.argv[2])
 
 

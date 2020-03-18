@@ -1,6 +1,6 @@
 import os
 
-root_dir = os.path.expanduser("~/ml_ws/cs224n/cs224n-finalproj-fixed")
+root_dir = os.path.expanduser("~/ml_ws/cs224n/cs224n-finalproj")
 
 #train_data_path = os.path.join(root_dir, "ptr_nw/cnn-dailymail-master/finished_files/train.bin")
 train_data_path = os.path.join(root_dir, "../cnn-dailymail/finished_files/chunked/train_*")

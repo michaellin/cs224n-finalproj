@@ -187,18 +187,21 @@ class Decoder(nn.Module):
         output = self.out2(output) # B x vocab_size
         vocab_dist = F.softmax(output, dim=1)
 
-        self.vocab_dist_ = vocab_dist
 
         if config.pointer_gen:
             vocab_dist_ = p_gen * vocab_dist
             attn_dist_ = (1 - p_gen) * attn_dist
 
+            # add the extra zeros corresponding to OOV 
             if extra_zeros is not None:
                 vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], 1)
 
+            # final_dist should be size of vocab with OOV
             final_dist = vocab_dist_.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
         else:
             final_dist = vocab_dist
+
+        self.vocab_dist_ = vocab_dist_
 
         return final_dist, s_t, c_t, attn_dist, p_gen, coverage
 
